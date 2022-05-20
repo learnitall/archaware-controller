@@ -81,7 +81,6 @@ func ensureNodeTaints(ctx *context.Context) {
 				Msg("Checking state of node")
 
 			attemptCounter := 0
-			taintExists := false
 			retryErr := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 				attemptCounter += 1
 				result, getErr := nodeClient.Get(
@@ -95,29 +94,39 @@ func ensureNodeTaints(ctx *context.Context) {
 					return getErr
 				}
 
-				needToAddTaint := false
-				for _, taint := range result.Spec.Taints {
+				getLog(zerolog.DebugLevel).
+					Interface("node-taints", node.Spec.Taints).
+					Msg("node's current taints before update")
+
+				for i, taint := range result.Spec.Taints {
 					if taint.Key == ARCH_TAINT_KEY_NAME {
 						if taint.Value == arch {
-							taintExists = true
+							getLog(zerolog.DebugLevel).
+								Msg("Taint with proper architecture was found, doing nothing")
 							return nil
 						} else {
-							taint.Value = arch
-							needToAddTaint = true
+							getLog(zerolog.DebugLevel).
+								Msg("Taint with bad architecture was found, updating")
+							numTaints := len(result.Spec.Taints)
+							// Delete this taint as it needs to be updated
+							result.Spec.Taints[i] = result.Spec.Taints[numTaints-1]
+							result.Spec.Taints = result.Spec.Taints[:numTaints-1]
 						}
 					}
 				}
 
-				if needToAddTaint {
-					result.Spec.Taints = append(
-						result.Spec.Taints,
-						v1.Taint{
-							Key:    ARCH_TAINT_KEY_NAME,
-							Value:  arch,
-							Effect: v1.TaintEffectNoSchedule,
-						},
-					)
-				}
+				result.Spec.Taints = append(
+					result.Spec.Taints,
+					v1.Taint{
+						Key:    ARCH_TAINT_KEY_NAME,
+						Value:  arch,
+						Effect: v1.TaintEffectNoSchedule,
+					},
+				)
+
+				getLog(zerolog.DebugLevel).
+					Interface("node-taints", result.Spec.Taints).
+					Msg("Applying the following taints")
 				_, updateErr := nodeClient.Update(
 					*ctx,
 					result,
@@ -125,9 +134,14 @@ func ensureNodeTaints(ctx *context.Context) {
 				)
 				if updateErr != nil {
 					getLog(zerolog.WarnLevel).
+						Err(updateErr).
 						Msg("Unable to update taint on node")
 					return updateErr
 				}
+
+				getLog(zerolog.InfoLevel).
+					Int("attempts", attemptCounter).
+					Msg("Added architecture taint on node")
 				return nil
 			})
 
@@ -135,17 +149,48 @@ func ensureNodeTaints(ctx *context.Context) {
 				getLog(zerolog.WarnLevel).
 					Int("attempts", attemptCounter).
 					Msg("Unable to update architecture taint on node")
-			} else if !taintExists {
-				getLog(zerolog.InfoLevel).
-					Int("attempts", attemptCounter).
-					Msg("Added architecture taint on node")
 			}
 		}
 	}
 }
 
 func ensurePodTolerations(ctx *context.Context) {
-
+	clientset := (*ctx).Value(K8S_CLIENTSET_KEY).(*kubernetes.Clientset)
+	podClient := clientset.CoreV1().Pods("")
+	podWatch, err := podClient.Watch(
+		*ctx,
+		metav1.ListOptions{},
+	)
+	if err != nil {
+		log.Fatal().
+			AnErr("err", err).
+			Msg("Unable to watch pods")
+	}
+	for {
+		select {
+		case <-(*ctx).Done():
+			podWatch.Stop()
+			return
+		case podEvent := <-podWatch.ResultChan():
+			if podEvent.Type == watch.Error {
+				log.Error().
+					Interface("api-err", podEvent.Object).
+					Msg("Received error while watching pods")
+				return
+			}
+			pod := podEvent.Object.(*v1.Pod)
+			name := pod.Name
+			log.Info().
+				Str("pod-name", name).
+				Msg("Got pod")
+			for _, container := range pod.Spec.Containers {
+				log.Info().
+					Str("container-name", container.Name).
+					Str("container-image", container.Image).
+					Msg("Got container")
+			}
+		}
+	}
 }
 
 // setupLogging kicks-off the rs/zerolog logger
@@ -157,7 +202,7 @@ func setupLogging(ctx *context.Context) {
 			Out:        os.Stdout,
 		},
 	)
-	zerolog.SetGlobalLevel(zerolog.InfoLevel)
+	zerolog.SetGlobalLevel(zerolog.DebugLevel)
 	log.Info().
 		Str("operator_name", OPERATOR_NAME).
 		Str("version", VERSION).
