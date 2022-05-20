@@ -21,4 +21,5 @@
 # Go workspace file
 go.work
 # ---
-
+# Output of go build
+archaware-operator
