@@ -11,10 +11,14 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
+	v1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/homedir"
+	"k8s.io/client-go/util/retry"
 )
 
 type ContextKey string
@@ -23,6 +27,7 @@ const (
 	OPERATOR_NAME           string        = "archaware"
 	VERSION                 string        = "v0.1.0"
 	RECONCILIATION_INTERVAL time.Duration = time.Second
+	ARCH_TAINT_KEY_NAME     string        = "supported-arch"
 	K8S_KUBECONFIG_PATH_KEY ContextKey    = "kubeconfig"
 	K8S_CONFIG_KEY          ContextKey    = "k8sconfig"
 	K8S_CLIENTSET_KEY       ContextKey    = "k8sclientset"
@@ -31,71 +36,116 @@ const (
 	INTERVAL_CHANS_KEY      ContextKey    = "intervalchans"
 )
 
-func consumeChannel(target chan int, stop chan int) {
-	for {
-		select {
-		case <-target:
-		case <-stop:
-			return
-		}
-	}
-}
-
 func ensureNodeTaints(ctx *context.Context) {
-	target := func() {
-		log.Info().Msg("node")
-	}
-	runOnInterval(
-		ctx,
-		NODE_INT_CHAN_KEY,
-		target,
+	clientset := (*ctx).Value(K8S_CLIENTSET_KEY).(*kubernetes.Clientset)
+	nodeClient := clientset.CoreV1().Nodes()
+	nodeWatch, err := nodeClient.Watch(
+		*ctx,
+		metav1.ListOptions{},
 	)
-}
-
-func ensurePodTolerations(ctx *context.Context) {
-	target := func() {
-		log.Info().Msg("pod")
+	if err != nil {
+		log.Fatal().
+			AnErr("err", err).
+			Msg("Unable to watch nodes")
 	}
-	runOnInterval(
-		ctx,
-		POD_INT_CHAN_KEY,
-		target,
-	)
-}
-
-func runOnInterval(
-	ctx *context.Context,
-	interval_chan_key ContextKey,
-	target func(),
-) {
-	var interval_chan chan int = (*ctx).Value(interval_chan_key).(chan int)
 	for {
 		select {
 		case <-(*ctx).Done():
+			nodeWatch.Stop()
 			return
-		case <-interval_chan:
-			stopConsuming := make(chan int)
-			go consumeChannel(interval_chan, stopConsuming)
-			target()
-			stopConsuming <- 1
-		}
-	}
-}
+		case nodeEvent := <-nodeWatch.ResultChan():
+			if nodeEvent.Type == watch.Error {
+				log.Error().
+					Interface("api-err", nodeEvent.Object).
+					Msg("Received error while watching nodes")
+				return
+			}
+			node := nodeEvent.Object.(*v1.Node)
+			name := node.ObjectMeta.Name
+			arch := node.Status.NodeInfo.Architecture
 
-func startIntervals(ctx *context.Context) {
-	ticker := time.NewTicker(RECONCILIATION_INTERVAL)
-	interval_channels := (*ctx).Value(INTERVAL_CHANS_KEY).([]chan int)
-	for {
-		select {
-		case <-(*ctx).Done():
-			ticker.Stop()
-			return
-		case <-ticker.C:
-			for _, channel := range interval_channels {
-				channel <- 1
+			getLog := func(level zerolog.Level) *zerolog.Event {
+				return log.WithLevel(level).
+					Str("name", name).
+					Str("arch", arch)
+			}
+
+			if nodeEvent.Type == watch.Deleted {
+				getLog(zerolog.InfoLevel).
+					Msg("Got deleted node")
+				return
+			}
+
+			getLog(zerolog.InfoLevel).
+				Interface("event-type", nodeEvent.Type).
+				Msg("Checking state of node")
+
+			attemptCounter := 0
+			taintExists := false
+			retryErr := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+				attemptCounter += 1
+				result, getErr := nodeClient.Get(
+					*ctx,
+					name,
+					metav1.GetOptions{},
+				)
+				if getErr != nil {
+					getLog(zerolog.WarnLevel).
+						Msg("Unable to get latest information on node")
+					return getErr
+				}
+
+				needToAddTaint := false
+				for _, taint := range result.Spec.Taints {
+					if taint.Key == ARCH_TAINT_KEY_NAME {
+						if taint.Value == arch {
+							taintExists = true
+							return nil
+						} else {
+							taint.Value = arch
+							needToAddTaint = true
+						}
+					}
+				}
+
+				if needToAddTaint {
+					result.Spec.Taints = append(
+						result.Spec.Taints,
+						v1.Taint{
+							Key:    ARCH_TAINT_KEY_NAME,
+							Value:  arch,
+							Effect: v1.TaintEffectNoSchedule,
+						},
+					)
+				}
+				_, updateErr := nodeClient.Update(
+					*ctx,
+					result,
+					metav1.UpdateOptions{},
+				)
+				if updateErr != nil {
+					getLog(zerolog.WarnLevel).
+						Msg("Unable to update taint on node")
+					return updateErr
+				}
+				return nil
+			})
+
+			if retryErr != nil {
+				getLog(zerolog.WarnLevel).
+					Int("attempts", attemptCounter).
+					Msg("Unable to update architecture taint on node")
+			} else if !taintExists {
+				getLog(zerolog.InfoLevel).
+					Int("attempts", attemptCounter).
+					Msg("Added architecture taint on node")
 			}
 		}
 	}
+}
+
+func ensurePodTolerations(ctx *context.Context) {
+
 }
 
 // setupLogging kicks-off the rs/zerolog logger
@@ -189,6 +239,6 @@ func main() {
 	defer stop()
 	go ensureNodeTaints(&ctx)
 	go ensurePodTolerations(&ctx)
-	startIntervals(&ctx)
 	<-ctx.Done()
+	stop()
 }
