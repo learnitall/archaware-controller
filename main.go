@@ -1,14 +1,18 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"flag"
+	"io"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"syscall"
 	"time"
 
+	"github.com/containerd/containerd"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	v1 "k8s.io/api/core/v1"
@@ -34,6 +38,7 @@ const (
 	NODE_INT_CHAN_KEY       ContextKey    = "nodeintervalchan"
 	POD_INT_CHAN_KEY        ContextKey    = "podntervalchan"
 	INTERVAL_CHANS_KEY      ContextKey    = "intervalchans"
+	CONTAINERD_CLIENT_KEY   ContextKey    = "containerdclient"
 )
 
 func ensureNodeTaints(ctx *context.Context) {
@@ -166,6 +171,7 @@ func ensurePodTolerations(ctx *context.Context) {
 			AnErr("err", err).
 			Msg("Unable to watch pods")
 	}
+	// containerdClient := (*ctx).Value(CONTAINERD_CLIENT_KEY).(*containerd.Client)
 	for {
 		select {
 		case <-(*ctx).Done():
@@ -248,6 +254,45 @@ func setupK8sClient(ctx *context.Context, kubeconfig string) error {
 	return nil
 }
 
+func setupContainerd(ctx *context.Context) error {
+	cmd := exec.Command("containerd")
+
+	// pipe output of containerd to stdout live
+	// https://stackoverflow.com/questions/48253268/print-the-stdout-from-exec-command-in-real-time-in-go
+	var stdBuffer bytes.Buffer
+	mw := io.MultiWriter(os.Stdout, &stdBuffer)
+	cmd.Stdout = mw
+	cmd.Stderr = mw
+
+	go func() {
+		log.Info().
+			Msg("Starting containerd")
+		cmd.Start()
+		<-(*ctx).Done()
+		if err := cmd.Process.Kill(); err != nil {
+			log.Warn().
+				AnErr("err", err).
+				Msg("Unable to kill containerd process")
+		}
+		if err := cmd.Process.Kill(); err != nil {
+			log.Warn().
+				AnErr("err", err).
+				Msg("Unable to wait for containerd process to complete")
+		}
+	}()
+
+	client, err := containerd.New("/run/containerd/containerd.sock")
+	if err != nil {
+		log.Fatal().
+			AnErr("err", err).
+			Msg("Unable to create containerd client")
+		return err
+	}
+
+	*ctx = context.WithValue(*ctx, CONTAINERD_CLIENT_KEY, client)
+	return nil
+}
+
 // setup performs setup functions required before execution,
 // returning a context object populated with variables needed
 // by other functions consuming the context
@@ -263,7 +308,12 @@ func setup() (context.Context, context.CancelFunc) {
 	ctx := context.Background()
 	setupLogging(&ctx)
 
-	err := setupK8sClient(&ctx, *kubeconfig)
+	err := setupContainerd(&ctx)
+	if err != nil {
+		panic(err)
+	}
+
+	err = setupK8sClient(&ctx, *kubeconfig)
 	if err != nil {
 		panic(err)
 	}
