@@ -15,10 +15,9 @@ type K8S_CLIENTSET_CTX_KEY_TYPE struct{}
 var K8S_CLIENTSET_CTX_KEY K8S_CLIENTSET_CTX_KEY_TYPE = K8S_CLIENTSET_CTX_KEY_TYPE{}
 
 // CreateK8sClientset creates and returns a new kubernetes clientset.
-// The only argument, kubeconfig takes in a path to the kubeconfig
-// to be used. If left blank, then a path to the kubeconfig will attempt
-// to be pulled from the KUBECONFIG environment variable. If it's not
-// available, then it will be assumed an in-cluster configuration is available.
+// The only argument, kubeconfig takes in a path to the kubeconfig to be used.
+// If left blank, then a path to the kubeconfig will attempt to be pulled from the KUBECONFIG environment variable.
+// If it's not available, then it will be assumed an in-cluster configuration is available.
 func CreateK8sClientset(kubeconfig string) (kubernetes.Interface, error) {
 	var config *rest.Config
 	var err error
@@ -51,8 +50,7 @@ func CreateK8sClientset(kubeconfig string) (kubernetes.Interface, error) {
 	return clientset, nil
 }
 
-// WithK8sClientset adds the given clientset to the given context, allowing for
-// it to be passed on to other objects at runtime.
+// WithK8sClientset adds the given clientset to the given context, allowing for it to be passed on to other objects at runtime.
 func WithK8sClientset(ctx context.Context, clientset kubernetes.Interface) context.Context {
 	return context.WithValue(ctx, K8S_CLIENTSET_CTX_KEY, clientset)
 }

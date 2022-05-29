@@ -12,8 +12,7 @@ func CreateK8sClientsetForTesting() kubernetes.Interface {
 	return fake.NewSimpleClientset()
 }
 
-// TestGetK8sClientsetReturnsNilWhenNoClientsetIsSet ensures that this function
-// can be called before WithK8sClientset
+// TestGetK8sClientsetReturnsNilWhenNoClientsetIsSet ensures that this function can be called before WithK8sClientset.
 func TestGetK8sClientsetReturnsNilWhenNoClientsetIsSet(t *testing.T) {
 	ctx := context.Background()
 	defer func() {
@@ -27,8 +26,7 @@ func TestGetK8sClientsetReturnsNilWhenNoClientsetIsSet(t *testing.T) {
 	}
 }
 
-// TestCanSToreClientsetInContext ensures that a kubernetes clientset can be
-// stored within a context
+// TestCanSToreClientsetInContext ensures that a kubernetes clientset can be .stored within a context
 func TestCanStoreClientsetInContext(t *testing.T) {
 	ctx := context.Background()
 	cs := CreateK8sClientsetForTesting()
