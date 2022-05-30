@@ -32,7 +32,7 @@ func CreateK8sClientset(kubeconfig string) (kubernetes.Interface, error) {
 	}
 
 	if err != nil {
-		log.Fatal().
+		log.Error().
 			AnErr("err", err).
 			Msg("Unable to create Kubernetes client configuration")
 		return nil, err
@@ -41,7 +41,7 @@ func CreateK8sClientset(kubeconfig string) (kubernetes.Interface, error) {
 	// creates the clientset
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
-		log.Fatal().
+		log.Error().
 			AnErr("err", err).
 			Msg("Unable to create Kubernetes client")
 		return nil, err
