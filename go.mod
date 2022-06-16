@@ -1,9 +1,10 @@
-module github.com/learnitall/archaware-operator
+module github.com/learnitall/archaware-controller
 
 go 1.18
 
 require (
 	github.com/containerd/containerd v1.6.4
+	github.com/opencontainers/image-spec v1.0.3-0.20211202183452-c5a74bcca799
 	github.com/rs/zerolog v1.26.1
 	k8s.io/api v0.24.0
 	k8s.io/apimachinery v0.24.0
@@ -46,7 +47,6 @@ require (
 	github.com/modern-go/reflect2 v1.0.2 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
-	github.com/opencontainers/image-spec v1.0.3-0.20211202183452-c5a74bcca799 // indirect
 	github.com/opencontainers/runc v1.1.2 // indirect
 	github.com/opencontainers/runtime-spec v1.0.3-0.20210326190908-1c3f411f0417 // indirect
 	github.com/opencontainers/selinux v1.10.1 // indirect
