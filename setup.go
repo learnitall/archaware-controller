@@ -44,7 +44,7 @@ func setupK8sClient(ctx *context.Context, kubeconfig string) error {
 	if kubeconfig == "" {
 		kubeconfig = os.Getenv("KUBECONFIG")
 	}
-	if kubeconfig != "" {
+	if _, err = os.Stat(kubeconfig); err == nil {
 		config, err = clientcmd.BuildConfigFromFlags("", kubeconfig)
 	} else {
 		config, err = rest.InClusterConfig()

@@ -18,10 +18,17 @@ import (
 	v1 "k8s.io/api/core/v1"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/util/retry"
 )
+
+type TolerationPatch struct {
+	Op    string          `json:"op"`
+	Path  string          `json:"path"`
+	Value []v1.Toleration `json:"value"`
+}
 
 func getArchitectures(ctx *context.Context, ref string) ([]string, error) {
 	// Resolve image reference and fetch content
@@ -127,6 +134,12 @@ func getArchitectures(ctx *context.Context, ref string) ([]string, error) {
 		getLog(zerolog.DebugLevel).
 			Interface("manifest", manifest).
 			Msg("Unmarshalled manifest")
+		if manifest.Config.Platform == nil {
+			getLog(zerolog.WarnLevel).
+				Interface("manifest", manifest).
+				Msg("Platform not given in manifest")
+			return nil, fmt.Errorf("unable to get platform from manifest for %s", name)
+		}
 		return []string{manifest.Config.Platform.Architecture}, nil
 	}
 
@@ -188,15 +201,15 @@ func handlePod(ctx *context.Context, pod *v1.Pod, clientset kubernetes.Interface
 	}
 
 	// Find existing tolerations and see if we need to remove any
-	unknownArchTols := []int{}
+	unknownArchTols := []string{}
 	// Determine if we need to update
 	needToRemoveArch := false
 	missingArchs := len(architectures)
-	for i, tol := range pod.Spec.Tolerations {
+	for _, tol := range pod.Spec.Tolerations {
 		if tol.Key == ARCH_TAINT_KEY_NAME {
 			if _, ok := missingArchMap[tol.Value]; !ok {
 				needToRemoveArch = true
-				unknownArchTols = append(unknownArchTols, i)
+				unknownArchTols = append(unknownArchTols, tol.Value)
 				getPodLog(zerolog.WarnLevel).
 					Str("unknown-arch", tol.Value).
 					Msg("Removing unknown arch in toleration (did an image change?)")
@@ -215,8 +228,12 @@ func handlePod(ctx *context.Context, pod *v1.Pod, clientset kubernetes.Interface
 	}
 
 	// Remove bad/unknown tolerations
-	for _, i := range unknownArchTols {
-		RemoveFromSlice(&pod.Spec.Tolerations, i)
+	for _, toRemoveArch := range unknownArchTols {
+		for i, toleration := range pod.Spec.Tolerations {
+			if toleration.Key == ARCH_TAINT_KEY_NAME && toleration.Value == toRemoveArch {
+				RemoveFromSlice(&pod.Spec.Tolerations, i)
+			}
+		}
 	}
 	// Add missing tolerations
 	for arch, toAdd := range missingArchMap {
@@ -256,11 +273,25 @@ func handlePod(ctx *context.Context, pod *v1.Pod, clientset kubernetes.Interface
 			Msg("Applying the following tolerations")
 
 		result.Spec.Tolerations = pod.Spec.Tolerations
+		patch := TolerationPatch{
+			Op:    "replace",
+			Path:  "spec/tolerations",
+			Value: result.Spec.Tolerations,
+		}
+		patchAsBytes, err := json.Marshal([]TolerationPatch{patch})
+		if err != nil {
+			log.Error().
+				Interface("patch", patch).
+				AnErr("err", err).
+				Msg("Unable to marshal patch payload into bytes")
+		}
 
-		_, updateErr := podClient.Update(
+		_, updateErr := podClient.Patch(
 			*ctx,
-			result,
-			metav1.UpdateOptions{},
+			result.Name,
+			types.JSONPatchType,
+			patchAsBytes,
+			metav1.PatchOptions{},
 		)
 		if updateErr != nil {
 			getPodLog(zerolog.WarnLevel).
@@ -298,6 +329,7 @@ func EnsurePodTolerations(ctx *context.Context) {
 		log.Error().
 			AnErr("err", err).
 			Msg("Unable to watch pods")
+		return
 	}
 
 	handlePodWrapper := func(pod *v1.Pod, wg *sync.WaitGroup) {
