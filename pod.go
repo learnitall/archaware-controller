@@ -18,17 +18,10 @@ import (
 	v1 "k8s.io/api/core/v1"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/util/retry"
 )
-
-type TolerationPatch struct {
-	Op    string          `json:"op"`
-	Path  string          `json:"path"`
-	Value []v1.Toleration `json:"value"`
-}
 
 func getArchitectures(ctx *context.Context, ref string) ([]string, error) {
 	// Resolve image reference and fetch content
@@ -87,6 +80,9 @@ func getArchitectures(ctx *context.Context, ref string) ([]string, error) {
 		return nil, err
 	}
 	fetchedContentBytes := fetchedContentBuffer.Bytes()
+	getLog(zerolog.DebugLevel).
+		Bytes("manifest", fetchedContentBytes).
+		Msg("Fetched bytes for image")
 
 	// unmarshal unmarshals fetchedContentBytes into the given target.
 	unmarshal := func(target interface{}) error {
@@ -137,8 +133,8 @@ func getArchitectures(ctx *context.Context, ref string) ([]string, error) {
 		if manifest.Config.Platform == nil {
 			getLog(zerolog.WarnLevel).
 				Interface("manifest", manifest).
-				Msg("Platform not given in manifest")
-			return nil, fmt.Errorf("unable to get platform from manifest for %s", name)
+				Msg("Platform not given in manifest, assuming amd64")
+			return []string{"amd64"}, nil
 		}
 		return []string{manifest.Config.Platform.Architecture}, nil
 	}
@@ -200,20 +196,10 @@ func handlePod(ctx *context.Context, pod *v1.Pod, clientset kubernetes.Interface
 		missingArchMap[arch] = true
 	}
 
-	// Find existing tolerations and see if we need to remove any
-	unknownArchTols := []string{}
-	// Determine if we need to update
-	needToRemoveArch := false
 	missingArchs := len(architectures)
 	for _, tol := range pod.Spec.Tolerations {
 		if tol.Key == ARCH_TAINT_KEY_NAME {
-			if _, ok := missingArchMap[tol.Value]; !ok {
-				needToRemoveArch = true
-				unknownArchTols = append(unknownArchTols, tol.Value)
-				getPodLog(zerolog.WarnLevel).
-					Str("unknown-arch", tol.Value).
-					Msg("Removing unknown arch in toleration (did an image change?)")
-			} else {
+			if _, ok := missingArchMap[tol.Value]; ok {
 				// Mark this toleration as already present
 				missingArchMap[tol.Value] = false
 				missingArchs -= 1
@@ -221,33 +207,10 @@ func handlePod(ctx *context.Context, pod *v1.Pod, clientset kubernetes.Interface
 		}
 	}
 
-	if !needToRemoveArch && missingArchs == 0 {
+	if missingArchs == 0 {
 		getPodLog(zerolog.InfoLevel).
 			Msg("Pod tolerations up to date, doing nothing")
 		return nil
-	}
-
-	// Remove bad/unknown tolerations
-	for _, toRemoveArch := range unknownArchTols {
-		for i, toleration := range pod.Spec.Tolerations {
-			if toleration.Key == ARCH_TAINT_KEY_NAME && toleration.Value == toRemoveArch {
-				RemoveFromSlice(&pod.Spec.Tolerations, i)
-			}
-		}
-	}
-	// Add missing tolerations
-	for arch, toAdd := range missingArchMap {
-		if !toAdd {
-			continue
-		}
-		pod.Spec.Tolerations = append(
-			pod.Spec.Tolerations,
-			v1.Toleration{
-				Key:    ARCH_TAINT_KEY_NAME,
-				Value:  arch,
-				Effect: v1.TaintEffectNoSchedule,
-			},
-		)
 	}
 
 	attemptCounter := 0
@@ -268,30 +231,29 @@ func handlePod(ctx *context.Context, pod *v1.Pod, clientset kubernetes.Interface
 			Interface("pod-tols", result.Spec.Tolerations).
 			Msg("pod's current tolerations before update")
 
+		// Add missing tolerations
+		for arch, toAdd := range missingArchMap {
+			if !toAdd {
+				continue
+			}
+			result.Spec.Tolerations = append(
+				result.Spec.Tolerations,
+				v1.Toleration{
+					Key:    ARCH_TAINT_KEY_NAME,
+					Value:  arch,
+					Effect: v1.TaintEffectNoSchedule,
+				},
+			)
+		}
+
 		getPodLog(zerolog.DebugLevel).
-			Interface("pod-tols", pod.Spec.Tolerations).
+			Interface("pod-tols", result.Spec.Tolerations).
 			Msg("Applying the following tolerations")
 
-		result.Spec.Tolerations = pod.Spec.Tolerations
-		patch := TolerationPatch{
-			Op:    "replace",
-			Path:  "spec/tolerations",
-			Value: result.Spec.Tolerations,
-		}
-		patchAsBytes, err := json.Marshal([]TolerationPatch{patch})
-		if err != nil {
-			log.Error().
-				Interface("patch", patch).
-				AnErr("err", err).
-				Msg("Unable to marshal patch payload into bytes")
-		}
-
-		_, updateErr := podClient.Patch(
+		_, updateErr := podClient.Update(
 			*ctx,
-			result.Name,
-			types.JSONPatchType,
-			patchAsBytes,
-			metav1.PatchOptions{},
+			result,
+			metav1.UpdateOptions{},
 		)
 		if updateErr != nil {
 			getPodLog(zerolog.WarnLevel).

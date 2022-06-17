@@ -2,11 +2,9 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 
 	"github.com/rs/zerolog/log"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
 )
 
@@ -60,36 +58,22 @@ func Clean(ctx *context.Context, stop context.CancelFunc) {
 				}
 			}
 
-			patch := TolerationPatch{
-				Op:    "replace",
-				Path:  "spec/tolerations",
-				Value: result.Spec.Tolerations,
-			}
-			patchAsBytes, err := json.Marshal([]TolerationPatch{patch})
-			if err != nil {
-				log.Error().
-					Interface("patch", patch).
-					AnErr("err", err).
-					Msg("Unable to marshal patch payload into bytes")
-			}
-			_, updateErr := nsPodClient.Patch(
+			deleteErr := nsPodClient.Delete(
 				*ctx,
-				pod.Name,
-				types.JSONPatchType,
-				patchAsBytes,
-				metav1.PatchOptions{},
+				result.Name,
+				metav1.DeleteOptions{},
 			)
-			if updateErr != nil {
+			if deleteErr != nil {
 				log.Error().
 					Str("pod", result.Name).
-					AnErr("err", updateErr).
-					Msg("Unable to update pod")
-				return updateErr
+					AnErr("err", deleteErr).
+					Msg("Unable to delete pod")
+				return deleteErr
 			}
 
 			log.Info().
 				Str("pod", result.Name).
-				Msg("tolerations removed")
+				Msg("Mark for deletion")
 			return nil
 		})
 	}
@@ -132,7 +116,7 @@ func Clean(ctx *context.Context, stop context.CancelFunc) {
 			if updateErr != nil {
 				log.Error().
 					Str("node", result.Name).
-					AnErr("err", err).
+					AnErr("err", updateErr).
 					Msg("Unable to update node")
 				return updateErr
 			}
