@@ -11,6 +11,7 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
+	"github.com/sirupsen/logrus"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -18,7 +19,7 @@ import (
 )
 
 // setupLogging kicks-off the rs/zerolog logger
-func setupLogging(ctx *context.Context) {
+func setupLogging() {
 	log.Logger = log.Output(
 		zerolog.ConsoleWriter{
 			TimeFormat: time.RFC3339,
@@ -31,6 +32,10 @@ func setupLogging(ctx *context.Context) {
 		Str("operator_name", OPERATOR_NAME).
 		Str("version", VERSION).
 		Msg("Hello World!")
+
+	// containerd uses logrus, so allow for those logs
+	// to be visible as well
+	logrus.SetLevel(logrus.DebugLevel)
 }
 
 // setupK8sClient creates and authenticates a Kubernetes client
@@ -94,7 +99,7 @@ func Setup() (context.Context, context.CancelFunc) {
 	flag.Parse()
 
 	ctx := context.Background()
-	setupLogging(&ctx)
+	setupLogging()
 
 	err := setupK8sClient(&ctx, *kubeconfig)
 	if err != nil {
