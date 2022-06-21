@@ -134,35 +134,14 @@ func getArchitectures(ctx *context.Context, ref string) ([]string, error) {
 		return architectures, nil
 	}
 
-	// handleOCIManifest is called when the fetchedContentBytes represents
-	// an oci Manifest.
-	handleOCIManifest := func() ([]string, error) {
-		getLog(zerolog.DebugLevel).
-			Msg("Got OCI manifest for image")
-		var manifest ocispec.Manifest
-		if err := unmarshal(fetchedManifestBytes, &manifest); err != nil {
-			return nil, err
-		}
-		getLog(zerolog.DebugLevel).
-			Interface("manifest", manifest).
-			Msg("Unmarshalled manifest")
-		if manifest.Config.Platform == nil {
-			getLog(zerolog.WarnLevel).
-				Interface("manifest", manifest).
-				Msg("Platform not given in manifest")
-			return nil, fmt.Errorf("platform not given in manifest for image %s", ref)
-		}
-		return []string{manifest.Config.Platform.Architecture}, nil
-	}
-
-	// handleDockerV2Manifest is called when the fetchedContentBytes represents
-	// a Docker Schema 2 Version 2 Image Manifest.
-	// Manifests with this schema do not contain an architecture, must pull
+	// handleManifest is called when the fetchedContentBytes represents
+	// a image manifest.
+	// Manifests may not contain an architecture, must pull
 	// from the manifest's blob.
 	// See https://github.com/docker/cli/blob/c59773f1551a8fd289538efc82274332f31f8c19/cli/registry/client/fetcher.go#L75=
-	handleDockerV2Manifest := func() ([]string, error) {
+	handleManifest := func() ([]string, error) {
 		getLog(zerolog.DebugLevel).
-			Msg("Got docker manifest v2 for image")
+			Msg("Got manifest for image")
 		// First pull the manifest itself
 		var manifest ocispec.Manifest
 		if err := unmarshal(fetchedManifestBytes, &manifest); err != nil {
@@ -171,6 +150,10 @@ func getArchitectures(ctx *context.Context, ref string) ([]string, error) {
 		getLog(zerolog.DebugLevel).
 			Interface("manifest", manifest).
 			Msg("Unmarshalled manifest")
+
+		if manifest.Config.Platform != nil && manifest.Config.Platform.Architecture != "" {
+			return []string{manifest.Config.Platform.Architecture}, nil
+		}
 		// When we fetch the image's digest with a blank mediaType,
 		// containerd will use the blob endpoint on the registry.
 		// Within the response for the blob endpoint on the registry,
@@ -216,10 +199,8 @@ func getArchitectures(ctx *context.Context, ref string) ([]string, error) {
 
 	if images.IsIndexType(desc.MediaType) {
 		return handleIndex()
-	} else if desc.MediaType == images.MediaTypeDockerSchema2Manifest {
-		return handleDockerV2Manifest()
 	} else if images.IsManifestType(desc.MediaType) {
-		return handleOCIManifest()
+		return handleManifest()
 	} else {
 		err := fmt.Errorf("unknown media type: %s", desc.MediaType)
 		getLog(zerolog.ErrorLevel).
