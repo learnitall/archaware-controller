@@ -85,7 +85,7 @@ The script [hak/build.sh](./hak/build.sh) can be used to build the archaware-con
 
 ```
 docker login
-DOCKER_NS=my_dockerhub_account ./hak/build.sh
+./hak/build.sh my_dockerhub_account <tag>
 ```
 
 ## Next Steps
