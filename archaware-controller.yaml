@@ -46,10 +46,19 @@ spec:
       labels:
         app: archaware-controller
     spec:
+      tolerations:
+      - key: "supported-arch"
+        operator: "Equal"
+        value: "arm"
+        effect: "NoSchedule"
+      - key: "supported-arch"
+        operator: "Equal"
+        value: "amd64"
+        effect: "NoSchedule"
       serviceAccountName: archaware-controller-serviceaccount
       containers:
       - name: archaware-operator
-        image: quay.io/learnitall0/archaware-controller:latest
+        image: docker.io/learnitall/archaware-controller:latest
         resources:
           limits:
             cpu: 250m
