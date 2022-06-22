@@ -39,19 +39,49 @@ func setupLogging() {
 }
 
 // setupK8sClient creates and authenticates a Kubernetes client
-// using either the given kubeconfig or the current pod's service account
+// using either a kubeconfig or the current pod's service account
 // Preferred order of configuration: kubeconfig given on CLI, KUBECONFIG env
-// variable, in-cluster config
-func setupK8sClient(ctx *context.Context, kubeconfig string) error {
+// variable, kubeconfig on home directory, in-cluster config
+func setupK8sClient(ctx *context.Context) error {
 	var config *rest.Config
 	var err error
 
-	if kubeconfig == "" {
-		kubeconfig = os.Getenv("KUBECONFIG")
+	kubeconfigEnv := os.Getenv("KUBECONFIG")
+	home := homedir.HomeDir()
+	kubeconfigArg := flag.Lookup("kubeconfig").Value.String()
+
+	var kubeconfig string
+	if kubeconfigArg == "" {
+		if kubeconfigEnv == "" {
+			if home == "" {
+				log.Debug().
+					Msg("Could not extract user provided config")
+				kubeconfig = ""
+			} else {
+				log.Debug().
+					Msg("Using default kubeconfig in home directory")
+				kubeconfig = filepath.Join(home, ".kube", "config")
+			}
+		} else {
+			log.Debug().
+				Msg("Using kubeconfig from $KUBECONFIG")
+			kubeconfig = kubeconfigEnv
+		}
+	} else {
+		log.Debug().
+			Msg("Using kubeconfig provided as input")
+		kubeconfig = kubeconfigArg
 	}
+
 	if _, err = os.Stat(kubeconfig); err == nil {
+		log.Info().
+			Str("kubeconfig", kubeconfig).
+			Msg("Got the following kubeconfig")
 		config, err = clientcmd.BuildConfigFromFlags("", kubeconfig)
 	} else {
+		log.Warn().
+			Str("kubeconfig", kubeconfig).
+			Msg("Assuming in-cluster kubeconfig, as given kubeconfig does not exist")
 		config, err = rest.InClusterConfig()
 	}
 	*ctx = context.WithValue(*ctx, K8S_KUBECONFIG_PATH_KEY, kubeconfig)
@@ -90,18 +120,10 @@ func GetK8sInterface(ctx *context.Context) kubernetes.Interface {
 // returning a context object populated with variables needed
 // by other functions consuming the context
 func Setup() (context.Context, context.CancelFunc) {
-	var kubeconfig *string
-	if home := homedir.HomeDir(); home != "" {
-		kubeconfig = flag.String("kubeconfig", filepath.Join(home, ".kube", "config"), "(optional) absolute path to the kubeconfig file")
-	} else {
-		kubeconfig = flag.String("kubeconfig", "", "absolute path to the kubeconfig file")
-	}
-	flag.Parse()
-
-	ctx := context.Background()
 	setupLogging()
+	ctx := context.Background()
 
-	err := setupK8sClient(&ctx, *kubeconfig)
+	err := setupK8sClient(&ctx)
 	if err != nil {
 		panic(err)
 	}
