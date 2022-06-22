@@ -54,6 +54,8 @@ This controller introduces a single point of failure in your cluster. If somethi
 
 As stated above, since tolerations on pods cannot be removed, issues may arise if a container's image within a pod is changed to one that uses a different architecture. It is recommended that if this needs to happen, a new pod should be created.
 
+Additionally, each time the controller contacts Docker Hub to review an image's manifest, that request is counted as a pull request. [Pull requests are rate-limited](https://www.docker.com/increase-rate-limits/), therefore the controller may contribute to hitting the pull rate limit depending on your activity.
+
 ## Contributing
 
 The directory `testimg` can be used to generate example manifests and manifest lists (aka indices) for testing the controller's ability to grab architectures for an image. It requires that you have the following:
@@ -90,6 +92,7 @@ docker login
 
 ## Next Steps
 
+* Add caching.
 * Explore use of [RuntimeClass](https://kubernetes.io/docs/concepts/containers/runtime-class/).
 * Add support for a configuration file for more opinionated deployments.
 * Create option for 'bootstrapping' the cluster before execution, by applying tolerations onto pods before taints on nodes are applied.
