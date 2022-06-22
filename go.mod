@@ -3,7 +3,7 @@ module github.com/learnitall/archaware-controller
 go 1.18
 
 require (
-	github.com/containerd/containerd v1.6.4
+	github.com/containerd/containerd v1.6.6
 	github.com/opencontainers/image-spec v1.0.3-0.20211202193544-a5463b7f9c84
 	github.com/rs/zerolog v1.26.1
 	github.com/sirupsen/logrus v1.8.1
