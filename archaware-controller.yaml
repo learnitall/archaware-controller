@@ -58,7 +58,7 @@ spec:
       serviceAccountName: archaware-controller-serviceaccount
       containers:
       - name: archaware-operator
-        image: docker.io/learnitall/archaware-controller:latest
+        image: docker.io/learnitall/archaware-controller:v1.0.0-alpha
         resources:
           limits:
             cpu: 250m
